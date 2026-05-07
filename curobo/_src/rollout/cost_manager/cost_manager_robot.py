@@ -16,6 +16,11 @@ import torch
 # CuRobo
 from curobo._src.cost.cost_base import BaseCost
 from curobo._src.cost.cost_cspace_dist import CSpaceDistCost
+from curobo._src.cost.cost_com_box import ComBoxCost
+from curobo._src.cost.cost_joint_bound import JointBoundCost
+from curobo._src.cost.cost_joint_coupling import JointCouplingCost
+from curobo._src.cost.cost_joint_posture import JointPostureCost
+from curobo._src.cost.cost_link_pose_relation import LinkPoseRelationCost
 from curobo._src.cost.cost_scene_collision import SceneCollisionCost
 from curobo._src.cost.cost_self_collision import SelfCollisionCost
 from curobo._src.cost.cost_tool_pose import ToolPoseCost
@@ -187,6 +192,34 @@ class RobotCostManager:
             config.target_cspace_dist_cfg.initialize_from_transition_model(transition_model)
             self.register_cost("target_cspace_dist", CSpaceDistCost(config.target_cspace_dist_cfg))
 
+        # Robot-specific joint coupling constraints/costs
+        if config.joint_coupling_cfg is not None:
+            config.joint_coupling_cfg.initialize_from_transition_model(transition_model)
+            self.register_cost("joint_coupling", JointCouplingCost(config.joint_coupling_cfg))
+
+        # Extra selected-joint bounds
+        if config.joint_bound_cfg is not None:
+            config.joint_bound_cfg.initialize_from_transition_model(transition_model)
+            self.register_cost("joint_bound", JointBoundCost(config.joint_bound_cfg))
+
+        # Soft selected-joint posture preferences
+        if config.joint_posture_cfg is not None:
+            config.joint_posture_cfg.initialize_from_transition_model(transition_model)
+            self.register_cost("joint_posture", JointPostureCost(config.joint_posture_cfg))
+
+        # Soft relative link pose preferences
+        if config.link_pose_relation_cfg is not None:
+            config.link_pose_relation_cfg.initialize_from_transition_model(transition_model)
+            self.register_cost(
+                "link_pose_relation",
+                LinkPoseRelationCost(config.link_pose_relation_cfg),
+            )
+
+        # Center-of-mass box constraints/costs
+        if config.com_box_cfg is not None:
+            config.com_box_cfg.initialize_from_transition_model(transition_model)
+            self.register_cost("com_box", ComBoxCost(config.com_box_cfg))
+
         self._initialized = True
         log_info(f"Initialized {len(self.costs)} costs for robot rollout")
 
@@ -281,6 +314,46 @@ class RobotCostManager:
                         trajectory_dt=state.joint_state.dt,
                     )
                     cost_collection.add(cost_value, "scene_collision")
+
+        # Joint coupling
+        if self.has_cost("joint_coupling"):
+            joint_coupling_cost = self.get_cost("joint_coupling")
+            if joint_coupling_cost.enabled:
+                with self._stream_context("joint_coupling"):
+                    cost_value = joint_coupling_cost.forward(state.joint_state)
+                    cost_collection.add(cost_value, "joint_coupling")
+
+        # Joint bound
+        if self.has_cost("joint_bound"):
+            joint_bound_cost = self.get_cost("joint_bound")
+            if joint_bound_cost.enabled:
+                with self._stream_context("joint_bound"):
+                    cost_value = joint_bound_cost.forward(state.joint_state)
+                    cost_collection.add(cost_value, "joint_bound")
+
+        # Joint posture
+        if self.has_cost("joint_posture"):
+            joint_posture_cost = self.get_cost("joint_posture")
+            if joint_posture_cost.enabled:
+                with self._stream_context("joint_posture"):
+                    cost_value = joint_posture_cost.forward(state.joint_state)
+                    cost_collection.add(cost_value, "joint_posture")
+
+        # Link pose relation
+        if self.has_cost("link_pose_relation"):
+            link_pose_relation_cost = self.get_cost("link_pose_relation")
+            if link_pose_relation_cost.enabled:
+                with self._stream_context("link_pose_relation"):
+                    cost_value = link_pose_relation_cost.forward(state.tool_poses)
+                    cost_collection.add(cost_value, "link_pose_relation")
+
+        # Center-of-mass box
+        if self.has_cost("com_box"):
+            com_box_cost = self.get_cost("com_box")
+            if com_box_cost.enabled:
+                with self._stream_context("com_box"):
+                    cost_value = com_box_cost.forward(state.cuda_robot_model_state)
+                    cost_collection.add(cost_value, "com_box")
 
         synchronize_cuda_streams(self._costs_events, self.device_cfg.device)
         return cost_collection

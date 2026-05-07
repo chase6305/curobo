@@ -479,8 +479,11 @@ class IKSolver:
         converged = torch.all(converged_all_links, dim=-1).squeeze(-1)
 
         if isinstance(feasible, bool):
-            success = converged
             feasible_tensor = torch.ones_like(converged) if feasible else torch.zeros_like(converged)
+            if self.config.success_requires_convergence:
+                success = torch.logical_and(converged, feasible_tensor)
+            else:
+                success = feasible_tensor
         else:
             if self.config.success_requires_convergence:
                 success = torch.logical_and(converged, feasible)
@@ -493,14 +496,38 @@ class IKSolver:
         )
         pose_cost = torch.cat(pose_cost_list, dim=-1).unsqueeze(dim=1)
 
+        pose_score = pose_cost.sum(dim=-1).squeeze(-1)
+
         if len(cost_list) > 0:
             cost = torch.cat(cost_list, dim=-1).unsqueeze(dim=1) + pose_cost.sum(dim=-1)
             cost = cost.squeeze(-1)
         else:
-            cost = pose_cost.sum(dim=-1).squeeze(-1)
-        cost_sum = cost
+            cost = pose_score
 
-        cost_sum[~success] += 1e16
+        if self.config.prioritize_constraints_over_convergence:
+            rollout_cost = metrics_result.costs_and_constraints.get_sum_cost(
+                sum_horizon=True,
+                include_all_hybrid=False,
+            )
+            if rollout_cost is None:
+                rollout_cost = torch.zeros_like(pose_score)
+            else:
+                rollout_cost = rollout_cost.view_as(pose_score)
+
+            sum_constraint = metrics_result.costs_and_constraints.get_sum_constraint(
+                sum_horizon=True,
+                include_all_hybrid=False,
+            )
+            if sum_constraint is None:
+                constraint_violation = torch.zeros_like(pose_score)
+            else:
+                constraint_violation = torch.clamp(sum_constraint.view_as(pose_score), min=0.0)
+
+            cost_sum = constraint_violation * 1.0e6 + rollout_cost + pose_score * 1.0e-3
+            cost_sum = torch.where(success, cost_sum, cost_sum + 1.0e9)
+        else:
+            cost_sum = cost
+            cost_sum[~success] += 1e16
         cost_sum_reshaped = cost_sum.view(-1, num_seeds)
         batch_size = cost_sum_reshaped.shape[0]
 

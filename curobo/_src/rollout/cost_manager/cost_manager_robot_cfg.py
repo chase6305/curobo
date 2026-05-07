@@ -15,6 +15,11 @@ from typing import TYPE_CHECKING, Dict, Optional
 # CuRobo
 from curobo._src.cost.cost_cspace_cfg import CSpaceCostCfg
 from curobo._src.cost.cost_cspace_dist_cfg import CSpaceDistCostCfg
+from curobo._src.cost.cost_com_box_cfg import ComBoxCostCfg
+from curobo._src.cost.cost_joint_bound_cfg import JointBoundCostCfg
+from curobo._src.cost.cost_joint_coupling_cfg import JointCouplingCostCfg
+from curobo._src.cost.cost_joint_posture_cfg import JointPostureCostCfg
+from curobo._src.cost.cost_link_pose_relation_cfg import LinkPoseRelationCostCfg
 from curobo._src.cost.cost_scene_collision_cfg import SceneCollisionCostCfg
 from curobo._src.cost.cost_self_collision_cfg import SelfCollisionCostCfg
 from curobo._src.cost.cost_tool_pose_cfg import ToolPoseCostCfg
@@ -62,6 +67,21 @@ class RobotCostManagerCfg:
     #: disables pose-based objectives.
     tool_pose_cfg: Optional[ToolPoseCostCfg] = None
 
+    #: Linear joint-coupling cost/constraint for robot-specific IK modes.
+    joint_coupling_cfg: Optional[JointCouplingCostCfg] = None
+
+    #: Extra selected-joint bounds beyond global URDF limits.
+    joint_bound_cfg: Optional[JointBoundCostCfg] = None
+
+    #: Center-of-mass box cost/constraint. Requires transition compute_com=True.
+    com_box_cfg: Optional[ComBoxCostCfg] = None
+
+    #: Soft target posture for selected joints, useful for redundant IK preferences.
+    joint_posture_cfg: Optional[JointPostureCostCfg] = None
+
+    #: Soft relative link-position preference, e.g. elbow below shoulder/wrist.
+    link_pose_relation_cfg: Optional[LinkPoseRelationCostCfg] = None
+
     def __post_init__(self):
         from .cost_manager_robot import RobotCostManager
 
@@ -85,6 +105,11 @@ class RobotCostManagerCfg:
             "start_cspace_dist_cfg": CSpaceDistCostCfg,
             "target_cspace_dist_cfg": CSpaceDistCostCfg,
             "tool_pose_cfg": ToolPoseCostCfg,
+            "joint_bound_cfg": JointBoundCostCfg,
+            "joint_coupling_cfg": JointCouplingCostCfg,
+            "joint_posture_cfg": JointPostureCostCfg,
+            "link_pose_relation_cfg": LinkPoseRelationCostCfg,
+            "com_box_cfg": ComBoxCostCfg,
         }
         data = {}
         for k, cfg_class in cost_key_map.items():

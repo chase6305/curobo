@@ -9,6 +9,7 @@ builds the full config from YAML paths or dictionaries.
 from __future__ import annotations
 
 # Standard Library
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Type, Union
 
@@ -61,6 +62,9 @@ class IKSolverCfg:
     #: if constraints (collision, joint limits) are satisfied, even if
     #: pose error exceeds the tolerance.
     success_requires_convergence: bool = True
+    #: When True, feasible body/robot constraints take priority over terminal
+    #: pose convergence when reporting success and selecting the returned seed.
+    prioritize_constraints_over_convergence: bool = False
 
     # IK-specific fields
     #: Override the optimizer iteration count when solving multi-link IK
@@ -161,6 +165,8 @@ class IKSolverCfg:
         velocity_regularization_weight: Optional[float] = None,
         acceleration_regularization_weight: Optional[float] = None,
         success_requires_convergence: bool = True,
+        exit_early: bool = True,
+        prioritize_constraints_over_convergence: bool = False,
         seed_position_weight: float = 1.0,
         seed_orientation_weight: float = 1.0,
         seed_velocity_weight: float = 0.0,
@@ -169,6 +175,8 @@ class IKSolverCfg:
         max_batch_size: int = 1,
         multi_env: bool = False,
         max_goalset: int = 1,
+        cost_configs: Optional[Dict[str, Any]] = None,
+        constraint_configs: Optional[Dict[str, Any]] = None,
     ) -> IKSolverCfg:
         """Create IKSolverCfg from flexible inputs.
 
@@ -206,6 +214,11 @@ class IKSolverCfg:
                 regularization in the rollout; None uses the config default.
             success_requires_convergence: When True (default), success requires
                 both constraint feasibility and pose convergence.
+            exit_early: When True, return as soon as enough solutions are successful.
+            prioritize_constraints_over_convergence: When True, IK success is
+                based on constraint feasibility instead of terminal pose tolerance,
+                and early exit is disabled so the optimizer still improves pose
+                error without sacrificing hard constraints.
             seed_position_weight: Position error weight for the seed LM solver.
             seed_orientation_weight: Orientation error weight for the seed LM solver.
             seed_velocity_weight: Velocity regularization weight for the seed LM solver.
@@ -214,11 +227,21 @@ class IKSolverCfg:
             max_batch_size: Maximum number of problems solved in parallel.
             multi_env: When True, each batched problem uses its own collision environment.
             max_goalset: Maximum goalset size per problem.
+            cost_configs: Optional extra entries merged into every optimizer
+                rollout's ``cost_cfg``. Use this for soft robot-specific IK
+                preferences such as human-like elbow posture.
+            constraint_configs: Optional extra entries merged into every rollout's
+                ``constraint_cfg``. This is intended for robot-specific IK constraints
+                such as joint coupling and CoM bounds.
 
         Returns:
             Configured IKSolverCfg instance.
         """
         num_envs = max_batch_size if multi_env else 1
+
+        if prioritize_constraints_over_convergence:
+            success_requires_convergence = False
+            exit_early = False
 
         # 1. Resolve YAML paths to dicts/configs
         robot_config, optimizer_dicts, metrics_rollout_dict, transition_model_dict, scene_model_dict = (
@@ -244,6 +267,26 @@ class IKSolverCfg:
                 if acceleration_regularization_weight is not None:
                     reg_w[1] = acceleration_regularization_weight
                 cspace_cfg["squared_l2_regularization_weight"] = reg_w
+
+        if cost_configs is not None:
+            for opt_dict in optimizer_dicts:
+                opt_dict.setdefault("rollout", {}).setdefault("cost_cfg", {}).update(
+                    deepcopy(cost_configs)
+                )
+
+        if constraint_configs is not None:
+            for opt_dict in optimizer_dicts:
+                opt_dict.setdefault("rollout", {}).setdefault("constraint_cfg", {}).update(
+                    deepcopy(constraint_configs)
+                )
+            metrics_rollout_dict.setdefault("rollout", {}).setdefault("constraint_cfg", {}).update(
+                deepcopy(constraint_configs)
+            )
+
+        rollout_dicts = [d.get("rollout", {}) for d in optimizer_dicts]
+        rollout_dicts.append(metrics_rollout_dict.get("rollout", {}))
+        if any("com_box_cfg" in r.get("constraint_cfg", {}) for r in rollout_dicts):
+            transition_model_dict.setdefault("transition_model_cfg", {})["compute_com"] = True
 
         # 3. Build SolverCoreCfg
         core_cfg = create_solver_core_cfg(
@@ -275,7 +318,9 @@ class IKSolverCfg:
             orientation_tolerance=orientation_tolerance,
             optimizer_collision_activation_distance=optimizer_collision_activation_distance,
             success_requires_convergence=success_requires_convergence,
+            prioritize_constraints_over_convergence=prioritize_constraints_over_convergence,
             override_iters_for_multi_link_ik=override_iters_for_multi_link_ik,
+            exit_early=exit_early,
             optimization_dt=optimization_dt,
             seed_position_weight=seed_position_weight,
             seed_orientation_weight=seed_orientation_weight,

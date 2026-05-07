@@ -72,6 +72,7 @@ class RobotStateTransitionCfg:
     state_finite_difference_mode: str = "BACKWARD"
     filter_robot_command: bool = False
     interpolation_steps: int = 1
+    compute_com: bool = False
     class_type: Type[RobotStateTransition] = RobotStateTransition
 
     @staticmethod

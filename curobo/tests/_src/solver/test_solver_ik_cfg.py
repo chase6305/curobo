@@ -133,6 +133,18 @@ class TestIKSolverCfgCreate:
         assert config.orientation_tolerance == 0.1
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+    def test_create_prioritizes_constraints_over_convergence(self, cuda_device_cfg):
+        """Test constraints-priority IK disables pose-required success and early exit."""
+        config = IKSolverCfg.create(
+            robot="franka.yml",
+            device_cfg=cuda_device_cfg,
+            prioritize_constraints_over_convergence=True,
+        )
+        assert config.prioritize_constraints_over_convergence is True
+        assert config.success_requires_convergence is False
+        assert config.exit_early is False
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
     def test_create_sets_use_cuda_graph(self, cuda_device_cfg):
         """Test create sets use_cuda_graph."""
         config = IKSolverCfg.create(
